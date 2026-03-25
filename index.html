@@ -1,14 +1,15 @@
-\<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>LowFrame chess</title>
+    <script src="chess.min.js"></script>
     <style>
         :root { --bg: #312e2b; --side: #262421; --green: #81b64c; --white: #ebecd0; --black: #779556; }
         body { margin: 0; background: var(--bg); color: white; font-family: sans-serif; display: flex; height: 100vh; justify-content: center; align-items: center; overflow: hidden; }
         .container { display: flex; width: 950px; height: 620px; gap: 20px; }
         
-        #board { display: grid; grid-template-columns: repeat(8, 70px); grid-template-rows: repeat(8, 70px); border: 5px solid #222; background: #222; user-select: none; }
+        #board { display: grid; grid-template-columns: repeat(8, 70px); grid-template-rows: repeat(8, 70px); border: 5px solid #222; background: #222; }
         .sq { width: 70px; height: 70px; display: flex; align-items: center; justify-content: center; font-size: 45px; cursor: pointer; }
         .w { background: var(--white); color: #444; }
         .b { background: var(--black); color: #fff; }
@@ -17,11 +18,11 @@
 
         .sidebar { width: 330px; background: var(--side); padding: 20px; display: flex; flex-direction: column; border-radius: 4px; box-sizing: border-box; }
         .status { background: #1b1917; padding: 15px; border-left: 5px solid var(--green); margin-bottom: 15px; }
-        .history { flex: 1; background: #1b1917; margin-bottom: 15px; padding: 10px; font-size: 13px; overflow-y: auto; font-family: monospace; border: 1px solid #333; min-height: 200px; }
+        .history { flex: 1; background: #1b1917; margin-bottom: 15px; padding: 10px; font-size: 13px; overflow-y: auto; font-family: monospace; border: 1px solid #333; }
         
-        button { background: #454341; color: white; border: none; padding: 12px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
+        button { background: #454341; color: white; border: none; padding: 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; }
         button:hover { background: #555; }
-        .btn-green { background: var(--green); height: 45px; font-size: 14px; }
+        .btn-green { background: var(--green); height: 50px; font-size: 14px; }
     </style>
 </head>
 <body>
@@ -31,135 +32,100 @@
     <div class="sidebar">
         <div class="status">
             <h3 id="mode-label" style="margin:0;">CHESS</h3>
-            <div id="instr" style="font-size:12px; color:#aaa; margin-top:5px;">Local Mode Active</div>
+            <div id="instr" style="font-size:12px; color:#aaa; margin-top:5px;">Ready to play.</div>
         </div>
-        <div class="history" id="history">History ready...</div>
-        <button class="btn-green" onclick="startAI()">Play vs Stockfish</button>
+        <div class="history" id="history"></div>
+        <button class="btn-green" onclick="startBot()">Play vs Bot</button>
         <button class="btn-green" onclick="startHuman()">2 Player</button>
-        <button style="margin-top:10px;" onclick="location.reload()">Reset Board</button>
+        <button style="margin-top:auto; background: #444;" onclick="location.reload()">Reset Board</button>
     </div>
 </div>
 
 <script>
-    const pieceMap = { 
-        'r':'♜','n':'♞','b':'♝','q':'♛','k':'♚','p':'♟',
-        'R':'♖','N':'♘','B':'♗','Q':'♕','K':'♔','P':'♙' 
-    };
-    
-    let board = [];
-    let turn = 'w';
-    let selectedSq = null;
-    let gameMode = 'human';
-    let engine = null;
-    let lastMove = { from: null, to: null };
+    let game, engine, mode = 'human', selectedSq = null;
+    const pieces = { p:'♟', r:'♜', n:'♞', b:'♝', q:'♛', k:'♚', P:'♙', R:'♖', N:'♘', B:'♗', Q:'♕', K:'♔' };
 
-    // Initialization
-    function initBoard() {
-        const start = "rnbqkbnrpppppppp................................PPPPPPPPRNBQKBNR";
-        board = start.split('').map(c => c === '.' ? null : c);
+    window.onload = () => {
+        if (typeof Chess === 'undefined') {
+            document.getElementById('instr').innerText = "ERROR: chess.min.js not found!";
+            return;
+        }
+        game = new Chess();
         render();
-    }
+    };
 
     function render() {
         const boardEl = document.getElementById('board');
         boardEl.innerHTML = '';
+        const history = game.history();
+        const lastMove = history.length > 0 ? game.history({verbose: true}).pop() : null;
+
         for (let i = 0; i < 64; i++) {
             const r = Math.floor(i / 8), c = i % 8;
+            const sq = String.fromCharCode(97 + c) + (8 - r);
             const el = document.createElement('div');
             el.className = `sq ${(r + c) % 2 === 0 ? 'w' : 'b'}`;
-            if (selectedSq === i) el.classList.add('selected');
-            if (lastMove.from === i || lastMove.to === i) el.classList.add('last-move');
             
-            const p = board[i];
-            if (p) el.innerText = pieceMap[p];
-            el.onclick = () => handleSquareClick(i);
+            if (selectedSq === sq) el.classList.add('selected');
+            if (lastMove && (lastMove.from === sq || lastMove.to === sq)) el.classList.add('last-move');
+
+            const p = game.get(sq);
+            if (p) el.innerText = pieces[p.color === 'w' ? p.type.toUpperCase() : p.type];
+            
+            el.onclick = () => handleClick(sq);
             boardEl.appendChild(el);
         }
+        
+        const histEl = document.getElementById('history');
+        histEl.innerText = history.join(' ');
+        histEl.scrollTop = histEl.scrollHeight;
     }
 
-    function handleSquareClick(i) {
-        const p = board[i];
+    function handleClick(sq) {
+        const p = game.get(sq);
         if (selectedSq === null) {
-            if (p && ((turn === 'w' && p === p.toUpperCase()) || (turn === 'b' && p === p.toLowerCase()))) {
-                selectedSq = i;
+            if (p && p.color === game.turn()) {
+                selectedSq = sq;
                 render();
             }
         } else {
-            if (i !== selectedSq) {
-                executeMove(selectedSq, i);
-            }
+            const move = game.move({ from: selectedSq, to: sq, promotion: 'q' });
             selectedSq = null;
             render();
-        }
-    }
 
-    function executeMove(from, to) {
-        board[to] = board[from];
-        board[from] = null;
-        lastMove = { from, to };
-        turn = turn === 'w' ? 'b' : 'w';
-        
-        if (gameMode === 'ai' && turn === 'b' && engine) {
-            document.getElementById('instr').innerText = "Stockfish is thinking...";
-            engine.postMessage(`position fen ${generateFen()}`);
-            engine.postMessage(`go movetime 1000`);
-        }
-    }
-
-    function generateFen() {
-        let fen = "";
-        for (let r = 0; r < 8; r++) {
-            let empty = 0;
-            for (let c = 0; c < 8; c++) {
-                const p = board[r * 8 + c];
-                if (!p) empty++;
-                else {
-                    if (empty > 0) { fen += empty; empty = 0; }
-                    fen += p;
-                }
+            if (move && mode === 'ai' && !game.game_over()) {
+                document.getElementById('instr').innerText = "Bot is thinking...";
+                engine.postMessage(`position fen ${game.fen()}`);
+                engine.postMessage(`go movetime 1000`);
             }
-            if (empty > 0) fen += empty;
-            if (r < 7) fen += "/";
         }
-        return fen + ` ${turn} - - 0 1`;
     }
 
-    function startAI() {
-        gameMode = 'ai';
-        document.getElementById('mode-label').innerText = "VS STOCKFISH";
-        initBoard();
-        
-        // Attempt to load engine from local file
+    function startBot() {
+        mode = 'ai';
+        document.getElementById('mode-label').innerText = "VS BOT";
+        game.reset();
         if (!engine) {
-            try {
-                engine = new Worker('stockfish.js');
-                engine.onmessage = (e) => {
-                    if (e.data.includes('bestmove')) {
-                        const m = e.data.split('bestmove ')[1].split(' ')[0];
-                        const from = (m[0].charCodeAt(0) - 97) + (8 - m[1]) * 8;
-                        const to = (m[2].charCodeAt(0) - 97) + (8 - m[3]) * 8;
-                        executeMove(from, to);
-                        render();
-                    }
-                };
-                engine.postMessage('uci');
-            } catch (err) {
-                document.getElementById('instr').innerText = "Security block: Use a local server.";
-            }
+            engine = new Worker('stockfish.js');
+            engine.onmessage = (e) => {
+                if (e.data.includes('bestmove')) {
+                    const m = e.data.split('bestmove ')[1].split(' ')[0];
+                    game.move({ from: m.slice(0,2), to: m.slice(2,4), promotion: 'q' });
+                    document.getElementById('instr').innerText = "Your turn.";
+                    render();
+                }
+            };
+            engine.postMessage('uci');
         }
+        render();
     }
 
     function startHuman() {
-        gameMode = 'human';
+        mode = 'human';
         document.getElementById('mode-label').innerText = "2 PLAYER";
-        initBoard();
+        game.reset();
+        render();
     }
-
-    function indexToCoord(i) {
-        return String.fromCharCode(97 + (i % 8)) + (8 - Math.floor(i / 8));
-    }
-
-    initBoard();
 </script>
 </body>
 </html>
