@@ -3,7 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>LowFrame chess</title>
-    <script src="chess.min.js"></script>
+    <script type="module">
+        import { Chess } from './chess.min.js';
+        window.Chess = Chess; 
+        window.dispatchEvent(new Event('chess-ready'));
+    </script>
     <style>
         :root { --bg: #312e2b; --side: #262421; --green: #81b64c; --white: #ebecd0; --black: #779556; }
         body { margin: 0; background: var(--bg); color: white; font-family: sans-serif; display: flex; height: 100vh; justify-content: center; align-items: center; overflow: hidden; }
@@ -17,12 +21,18 @@
         .last-move { background: rgba(246, 246, 105, 0.4) !important; }
 
         .sidebar { width: 330px; background: var(--side); padding: 20px; display: flex; flex-direction: column; border-radius: 4px; box-sizing: border-box; }
-        .status { background: #1b1917; padding: 15px; border-left: 5px solid var(--green); margin-bottom: 15px; }
-        .history { flex: 1; background: #1b1917; margin-bottom: 15px; padding: 10px; font-size: 13px; overflow-y: auto; font-family: monospace; border: 1px solid #333; }
+        .status { background: #1b1917; padding: 15px; border-left: 5px solid var(--green); margin-bottom: 10px; }
+        .history { flex: 1; background: #1b1917; margin-bottom: 10px; padding: 10px; font-size: 13px; overflow-y: auto; font-family: monospace; border: 1px solid #333; }
         
-        button { background: #454341; color: white; border: none; padding: 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 10px; }
+        .difficulty-ctrl { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px; }
+        .difficulty-ctrl button { padding: 10px; font-size: 10px; background: #333; margin: 0; }
+        .difficulty-ctrl button.active { background: var(--green); }
+
+        button { background: #454341; color: white; border: none; padding: 15px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: bold; text-transform: uppercase; margin-bottom: 5px; }
         button:hover { background: #555; }
         .btn-green { background: var(--green); height: 50px; font-size: 14px; }
+        .btn-resign { background: #b33; margin-top: 5px; font-size: 11px; padding: 10px; }
+        .btn-resign:hover { background: #d44; }
     </style>
 </head>
 <body>
@@ -32,73 +42,108 @@
     <div class="sidebar">
         <div class="status">
             <h3 id="mode-label" style="margin:0;">CHESS</h3>
-            <div id="instr" style="font-size:12px; color:#aaa; margin-top:5px;">Ready to play.</div>
+            <div id="instr" style="font-size:12px; color:#aaa; margin-top:5px;">Ready.</div>
         </div>
+        
+        <div class="difficulty-ctrl">
+            <button id="diff-150" onclick="setDifficulty(150)" class="active">Beginner</button>
+            <button id="diff-300" onclick="setDifficulty(300)">Medium</button>
+            <button id="diff-1000" onclick="setDifficulty(1000)">Hard</button>
+            <button id="diff-2500" onclick="setDifficulty(2500)">Grandmaster</button>
+        </div>
+
         <div class="history" id="history"></div>
         <button class="btn-green" onclick="startBot()">Play vs Bot</button>
         <button class="btn-green" onclick="startHuman()">2 Player</button>
-        <button style="margin-top:auto; background: #444;" onclick="location.reload()">Reset Board</button>
+        <button class="btn-resign" onclick="resign()">Resign</button>
+        <button style="margin-top:auto; background: #444;" onclick="location.reload()">Reset Game</button>
     </div>
 </div>
 
 <script>
     let game, engine, mode = 'human', selectedSq = null;
+    let currentElo = 150;
     const pieces = { p:'♟', r:'♜', n:'♞', b:'♝', q:'♛', k:'♚', P:'♙', R:'♖', N:'♘', B:'♗', Q:'♕', K:'♔' };
 
-    window.onload = () => {
-        if (typeof Chess === 'undefined') {
-            document.getElementById('instr').innerText = "ERROR: chess.min.js not found!";
-            return;
-        }
+    window.addEventListener('chess-ready', () => {
         game = new Chess();
         render();
-    };
+    });
+
+    function setDifficulty(elo) {
+        currentElo = elo;
+        document.querySelectorAll('.difficulty-ctrl button').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`diff-${elo}`).classList.add('active');
+        if (engine) applyEngineStrength();
+    }
+
+    function applyEngineStrength() {
+        engine.postMessage('setoption name UCI_LimitStrength value true');
+        engine.postMessage(`setoption name UCI_Elo value ${currentElo}`);
+        
+        let skill = 0;
+        if (currentElo >= 2500) skill = 20;
+        else if (currentElo >= 1000) skill = 10;
+        else if (currentElo >= 300) skill = 3;
+        engine.postMessage(`setoption name Skill Level value ${skill}`);
+    }
 
     function render() {
+        if (!game) return;
         const boardEl = document.getElementById('board');
         boardEl.innerHTML = '';
-        const history = game.history();
-        const lastMove = history.length > 0 ? game.history({verbose: true}).pop() : null;
+        const history = game.history({ verbose: true });
+        const lastMove = history.length > 0 ? history[history.length - 1] : null;
 
         for (let i = 0; i < 64; i++) {
             const r = Math.floor(i / 8), c = i % 8;
             const sq = String.fromCharCode(97 + c) + (8 - r);
             const el = document.createElement('div');
             el.className = `sq ${(r + c) % 2 === 0 ? 'w' : 'b'}`;
-            
             if (selectedSq === sq) el.classList.add('selected');
             if (lastMove && (lastMove.from === sq || lastMove.to === sq)) el.classList.add('last-move');
-
             const p = game.get(sq);
             if (p) el.innerText = pieces[p.color === 'w' ? p.type.toUpperCase() : p.type];
-            
             el.onclick = () => handleClick(sq);
             boardEl.appendChild(el);
         }
-        
-        const histEl = document.getElementById('history');
-        histEl.innerText = history.join(' ');
-        histEl.scrollTop = histEl.scrollHeight;
+        document.getElementById('history').innerText = game.history().join(' ');
     }
 
     function handleClick(sq) {
-        const p = game.get(sq);
+        if (!game || game.game_over()) return;
         if (selectedSq === null) {
-            if (p && p.color === game.turn()) {
-                selectedSq = sq;
-                render();
+            if (game.get(sq) && game.get(sq).color === game.turn()) {
+                selectedSq = sq; render();
             }
         } else {
             const move = game.move({ from: selectedSq, to: sq, promotion: 'q' });
-            selectedSq = null;
-            render();
-
-            if (move && mode === 'ai' && !game.game_over()) {
-                document.getElementById('instr').innerText = "Bot is thinking...";
-                engine.postMessage(`position fen ${game.fen()}`);
-                engine.postMessage(`go movetime 1000`);
+            selectedSq = null; render();
+            
+            if (move) {
+                if (game.game_over()) {
+                    checkGameOver();
+                } else if (mode === 'ai' && game.turn() === 'b') {
+                    document.getElementById('instr').innerText = "Bot is thinking...";
+                    engine.postMessage(`position fen ${game.fen()}`);
+                    const thinkTime = currentElo >= 2500 ? 10000 : 1000;
+                    engine.postMessage(`go movetime ${thinkTime}`);
+                }
             }
         }
+    }
+
+    function checkGameOver() {
+        if (game.in_checkmate()) document.getElementById('instr').innerText = "Checkmate!";
+        else if (game.in_draw()) document.getElementById('instr').innerText = "Draw!";
+        else document.getElementById('instr').innerText = "Game Over.";
+    }
+
+    function resign() {
+        if (!game) return;
+        document.getElementById('instr').innerText = "You resigned.";
+        game.reset();
+        render();
     }
 
     function startBot() {
@@ -111,20 +156,20 @@
                 if (e.data.includes('bestmove')) {
                     const m = e.data.split('bestmove ')[1].split(' ')[0];
                     game.move({ from: m.slice(0,2), to: m.slice(2,4), promotion: 'q' });
-                    document.getElementById('instr').innerText = "Your turn.";
+                    document.getElementById('instr').innerText = game.game_over() ? "Bot wins!" : "Your turn.";
                     render();
                 }
             };
             engine.postMessage('uci');
         }
+        applyEngineStrength();
         render();
     }
 
     function startHuman() {
         mode = 'human';
         document.getElementById('mode-label').innerText = "2 PLAYER";
-        game.reset();
-        render();
+        game.reset(); render();
     }
 </script>
 </body>
